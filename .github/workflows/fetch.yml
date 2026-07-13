@@ -1,24 +1,23 @@
 name: Daily Score Fetch
 on:
-schedule:
-# Runs at 8:00 AM UTC every day, which is 4:00 AM EST (Daylight saving safe)
-- cron: '0 8 * * *'
-workflow_dispatch: # Allows you to manually click a button to run it if needed
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
 
 jobs:
-run-fetch:
-runs-on: ubuntu-latest
-steps:
-- name: Checkout Code
-uses: actions/checkout@v3
+  run-fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-  - name: Setup Node.js
-    uses: actions/setup-node@v3
-    with:
-      node-version: '18'
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
 
-  - name: Install dependencies
-    run: npm install hashids
+      - name: Install dependencies
+        run: npm install hashids
 
-  - name: Run Fetch Script
-    run: node fetch-scores.js
+      - name: Run Fetch Script
+        run: node fetch-scores.js
