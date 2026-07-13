@@ -5,7 +5,7 @@ const Hashids = require('hashids/cjs');
 // CONFIGURATION
 // ==========================================================
 // PASTE YOUR GOOGLE APPS SCRIPT URL HERE
-const APPS_SCRIPT_URL_SCORES = 'PASTE_YOUR_APPS_SCRIPT_URL_HERE';
+const APPS_SCRIPT_URL_SCORES = 'https://script.google.com/macros/s/AKfycbwYy93u7J0pI1i5l7o9fO5t7sU6P8P9wT_wP9o-T6pY7wM9gO2fO-t8T9zYvO2T4nQ/exec';
 
 const REAL_AUTH_TOKEN = 'xnr5VpW3!ApZk8L2E!4fe6e26f-949f-4936-ae3e-16384878932f';
 const REAL_VERSION = '27';
