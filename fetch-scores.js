@@ -310,21 +310,17 @@ async function run() {
             body: JSON.stringify(payload)
         });
 
-        // READ AS RAW TEXT SO IT NEVER CRASHES ON INVALID HTML
-        const rawText = await postRes.text();
+        // --- NEW: INTERCEPT AND PRINT RAW RESPONSE ---
+        const rawResponse = await postRes.text();
         
-        try {
-            const postResult = JSON.parse(rawText);
-            console.log("Google Sheets Response:", postResult);
-        } catch (e) {
-            console.error("\n========================================================");
-            console.error("CRITICAL ERROR: Google Apps Script returned HTML instead of JSON.");
-            console.error("========================================================");
-            console.error("1. Did you paste your Apps Script URL into 'APPS_SCRIPT_URL_SCORES' at the top of this file?");
-            console.error("2. Is your Apps Script deployment explicitly set to 'Anyone'?");
-            console.error("Raw Google Response snippet:\n", rawText.substring(0, 500));
-            throw new Error("Invalid response from Google Apps Script");
-        }
+        console.log("\n========================================================");
+        console.log("RAW GOOGLE RESPONSE:");
+        console.log(rawResponse.substring(0, 1500)); // Prints the actual HTML error page!
+        console.log("========================================================\n");
+
+        // Now attempt to parse it
+        const postResult = JSON.parse(rawResponse);
+        console.log("Google Sheets Response:", postResult);
 
     } catch (err) {
         console.error("CRITICAL SCRIPT ERROR:", err);
