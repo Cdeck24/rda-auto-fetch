@@ -113,18 +113,29 @@ async function run() {
 
         const todayGames = [];
         let isPlayoff = false;
+        let isPreseason = false;
 
         scheduleCsv.slice(1).forEach(r => {
             if (isSameDate(r[dIdx], targetDate)) {
                 todayGames.push({ team1: r[t1Idx]?.trim(), team2: r[t2Idx]?.trim() });
-                if (typeIdx > -1 && r[typeIdx]?.toLowerCase().includes('playoff')) {
+                const typeStr = typeIdx > -1 ? (r[typeIdx] || '').toLowerCase() : '';
+                
+                if (typeStr.includes('playoff')) {
                     isPlayoff = true;
+                }
+                if (typeStr.includes('preseason') || typeStr.includes('pre-season')) {
+                    isPreseason = true;
                 }
             }
         });
 
         if (todayGames.length === 0) {
             console.log(`No games found for ${targetDate}. Exiting cleanly.`);
+            return;
+        }
+
+        if (isPreseason) {
+            console.log(`Preseason games detected for ${targetDate}. Skipping auto-save to official records.`);
             return;
         }
 
