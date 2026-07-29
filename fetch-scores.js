@@ -138,6 +138,7 @@ async function run() {
             const team = row[teamIdx]?.trim();
             const isPlaying = row[playIdx]?.trim().toLowerCase() === 'yes';
             
+            // Only fetch players who are officially playing (Starters)
             if (team && activeTeamsLower.has(team.toLowerCase()) && isPlaying) {
                 const userId = row[uidIdx]?.trim();
                 const username = row[uIdx]?.trim();
@@ -309,14 +310,18 @@ async function run() {
             body: JSON.stringify(payload)
         });
 
+        // READ AS RAW TEXT SO IT NEVER CRASHES ON INVALID HTML
         const rawText = await postRes.text();
         
         try {
             const postResult = JSON.parse(rawText);
             console.log("Google Sheets Response:", postResult);
         } catch (e) {
-            console.error("\nCRITICAL ERROR: Google Apps Script returned HTML instead of JSON.");
-            console.error("This usually means the Web App crashed, or permissions are set incorrectly.");
+            console.error("\n========================================================");
+            console.error("CRITICAL ERROR: Google Apps Script returned HTML instead of JSON.");
+            console.error("========================================================");
+            console.error("1. Did you paste your Apps Script URL into 'APPS_SCRIPT_URL_SCORES' at the top of this file?");
+            console.error("2. Is your Apps Script deployment explicitly set to 'Anyone'?");
             console.error("Raw Google Response snippet:\n", rawText.substring(0, 500));
             throw new Error("Invalid response from Google Apps Script");
         }
