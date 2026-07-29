@@ -30,6 +30,23 @@ function getTargetDate() {
     return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+// Bulletproof Date Matcher (Handles "7/28" vs "7/28/2026")
+const isSameDate = (csvDate, todayStr) => {
+    if (!csvDate) return false;
+    const cleanDate = String(csvDate).trim();
+    if (cleanDate === todayStr) return true;
+    
+    const parsed = new Date(cleanDate);
+    if (!isNaN(parsed.getTime())) {
+        if (`${parsed.getMonth() + 1}/${parsed.getDate()}` === todayStr) return true;
+    }
+    
+    const partsSlash = cleanDate.split('/');
+    if (partsSlash.length >= 2 && `${parseInt(partsSlash[0])}/${parseInt(partsSlash[1])}` === todayStr) return true;
+    
+    return false;
+};
+
 async function fetchCSV(url) {
     const res = await fetch(url);
     if (!res.ok) throw new Error('Failed to fetch CSV');
@@ -51,12 +68,10 @@ async function fetchCSV(url) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-async function fetchRealStats(userId, retries = 0) {
+async function fetchRealDraftStats(url, retries = 0) {
     const token = generateRequestToken();
-    const targetUrl = `https://web.realsports.io/sportbrawluserstats/${userId}`;
     
-    // Bypassing Cloudflare Proxy entirely since Node.js has no CORS restrictions!
-    const res = await fetch(targetUrl, {
+    const res = await fetch(url, {
         headers: {
             'real-auth-info': REAL_AUTH_TOKEN,
             'real-device-name': 'Chrome on Web',
@@ -64,14 +79,15 @@ async function fetchRealStats(userId, retries = 0) {
             'real-device-uuid': randomUUID(),
             'real-request-token': token,
             'real-version': REAL_VERSION,
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
-            'Origin': 'https://realsports.io'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'Origin': 'https://realsports.io',
+            'Accept': 'application/json'
         }
     });
 
     if (res.status === 429 && retries < 3) {
         await sleep(3000);
-        return fetchRealStats(userId, retries + 1);
+        return fetchRealDraftStats(url, retries + 1);
     }
     
     if (!res.ok) throw new Error(`API ${res.status}`);
@@ -99,7 +115,7 @@ async function run() {
         let isPlayoff = false;
 
         scheduleCsv.slice(1).forEach(r => {
-            if (r[dIdx]?.trim() === targetDate) {
+            if (isSameDate(r[dIdx], targetDate)) {
                 todayGames.push({ team1: r[t1Idx]?.trim(), team2: r[t2Idx]?.trim() });
                 if (typeIdx > -1 && r[typeIdx]?.toLowerCase().includes('playoff')) {
                     isPlayoff = true;
@@ -117,9 +133,9 @@ async function run() {
             if (g.team1) activeTeamsLower.add(g.team1.toLowerCase());
             if (g.team2) activeTeamsLower.add(g.team2.toLowerCase());
         });
-        console.log(`Found ${todayGames.length} games.`);
+        console.log(`Found ${todayGames.length} games. Processing active teams: ${Array.from(activeTeamsLower).join(', ')}`);
 
-        // 2. Parse Players
+        // 2. Parse Players & Find Sport IDs
         const pHeaders = playersCsv[0].map(h => h.toLowerCase());
         const uIdx = pHeaders.findIndex(h => h === 'username');
         const uidIdx = pHeaders.findIndex(h => h.includes('user id') || h.includes('userid'));
@@ -133,64 +149,82 @@ async function run() {
         });
 
         const allPlayerData = {};
+        const fetchQueue = [];
 
         playersCsv.slice(1).forEach(row => {
             const team = row[teamIdx]?.trim();
             const isPlaying = row[playIdx]?.trim().toLowerCase() === 'yes';
             
-            // Only fetch players who are officially playing (Starters)
             if (team && activeTeamsLower.has(team.toLowerCase()) && isPlaying) {
                 const userId = row[uidIdx]?.trim();
                 const username = row[uIdx]?.trim();
                 if (!userId) return;
 
-                allPlayerData[userId] = { userId, username, team, scoresBySport: {}, lineupsBySport: {} };
+                if (!allPlayerData[userId]) {
+                    allPlayerData[userId] = { userId, username, team, scoresBySport: {}, lineupsBySport: {} };
+                }
+
+                // Look for Draft IDs for this player and queue them up
+                for (const sport in sportIdIndices) {
+                    const draftId = row[sportIdIndices[sport]]?.trim();
+                    if (draftId) {
+                        fetchQueue.push({
+                            url: `https://web.realsports.io/games/playerratingcontest/${draftId}/view/${userId}?contestType=sport&source=home`,
+                            userId: userId,
+                            sport: sport
+                        });
+                    }
+                }
             }
         });
 
-        const userIdsToFetch = Object.keys(allPlayerData);
-        console.log(`Fetching live stats for ${userIdsToFetch.length} active players...`);
+        console.log(`Queued ${fetchQueue.length} specific draft API requests...`);
 
         // 3. Fetch Stats Sequentially (Safe Node.js pacing)
-        for (let i = 0; i < userIdsToFetch.length; i++) {
-            const uid = userIdsToFetch[i];
-            const pData = allPlayerData[uid];
+        for (let i = 0; i < fetchQueue.length; i++) {
+            const req = fetchQueue[i];
+            const pData = allPlayerData[req.userId];
             
             try {
-                const data = await fetchRealStats(uid);
+                const data = await fetchRealDraftStats(req.url);
                 
-                // Process each configured sport from CSV
-                for (const sport in sportIdIndices) {
-                    let score = 0;
-                    let lineup = [];
-                    
-                    // Match the specific sport stats from API response
-                    const sportStat = (data.stats || []).find(s => s.sport.toUpperCase() === sport);
-                    if (sportStat) {
-                        const displayStat = sportStat.displayStats?.find(ds => ds.label === "Score" || ds.label === "Points");
-                        if (displayStat) score = parseFloat(displayStat.display || 0);
-                        
-                        let extracted = sportStat.lineup || sportStat.playerLineups || [];
-                        if (!Array.isArray(extracted)) {
-                            if (extracted.players) extracted = extracted.players;
-                            else if (extracted.items) extracted = extracted.items;
-                            else extracted = [];
-                        }
-                        lineup = extracted;
-                    }
-                    
-                    pData.scoresBySport[sport] = score;
-                    pData.lineupsBySport[sport] = lineup;
+                // Extract score safely
+                let scoreDisplay = '0';
+                if (data.info?.rankDisplayInfos?.length > 0) {
+                    scoreDisplay = data.info.rankDisplayInfos[0].scoreDisplay || '0';
+                } else if (data.rankDisplayInfos?.length > 0) {
+                    scoreDisplay = data.rankDisplayInfos[0].scoreDisplay || '0';
+                } else if (data.scoreDisplay) {
+                    scoreDisplay = data.scoreDisplay;
+                } else if (data.info?.score !== undefined) {
+                    scoreDisplay = data.info.score;
+                } else if (data.score !== undefined) {
+                    scoreDisplay = data.score;
+                }
+                
+                const finalScore = parseFloat(String(scoreDisplay).replace(/,/g, '')) || 0;
+                pData.scoresBySport[req.sport] = finalScore;
+
+                // Extract Lineup
+                let extractedLineup = data.lineup || data.playerLineups || data.contestPlayerLineup || data.lineups || [];
+                if (!Array.isArray(extractedLineup)) {
+                    if (extractedLineup.players) extractedLineup = extractedLineup.players;
+                    else if (extractedLineup.items) extractedLineup = extractedLineup.items;
+                    else extractedLineup = [];
+                }
+                pData.lineupsBySport[req.sport] = extractedLineup;
+
+                if (data.info?.user?.userName || data.user?.userName) {
+                    pData.username = data.info?.user?.userName || data.user?.userName;
                 }
 
-                if (data.info?.user?.userName) pData.username = data.info.user.userName;
+                if (i % 10 === 0) console.log(`Processed ${i}/${fetchQueue.length} requests...`);
 
             } catch (e) {
-                console.error(`Failed to fetch for ${uid}:`, e.message);
-                for (const sport in sportIdIndices) pData.scoresBySport[sport] = 0;
+                console.error(`Failed to fetch ${req.sport} for ${pData.username}:`, e.message);
             }
             
-            await sleep(300); // Standard pacing
+            await sleep(350); // Standard pacing
         }
 
         // 4. Duplicate Logic
@@ -310,12 +344,11 @@ async function run() {
             body: JSON.stringify(payload)
         });
 
-        // --- NEW: INTERCEPT AND PRINT RAW RESPONSE ---
         const rawResponse = await postRes.text();
         
         console.log("\n========================================================");
         console.log("RAW GOOGLE RESPONSE:");
-        console.log(rawResponse.substring(0, 1500)); // Prints the actual HTML error page!
+        console.log(rawResponse.substring(0, 1500)); 
         console.log("========================================================\n");
 
         // Now attempt to parse it
