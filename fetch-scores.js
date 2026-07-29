@@ -5,7 +5,7 @@ const Hashids = require('hashids/cjs');
 // CONFIGURATION
 // ==========================================================
 // PASTE YOUR GOOGLE APPS SCRIPT URL HERE
-const APPS_SCRIPT_URL_SCORES = 'https://script.google.com/macros/s/AKfycbwYy93u7J0pI1i5l7o9fO5t7sU6P8P9wT_wP9o-T6pY7wM9gO2fO-t8T9zYvO2T4nQ/exec';
+const APPS_SCRIPT_URL_SCORES = 'https://script.google.com/macros/s/AKfycbyY4rz_46uk2JnqO4y7Os-0LHSU4TL43jPrtG-GXYUC61XU2o1QXoK0qMpdTdwzmenG/exec';
 
 const REAL_AUTH_TOKEN = 'xnr5VpW3!ApZk8L2E!4fe6e26f-949f-4936-ae3e-16384878932f';
 const REAL_VERSION = '27';
@@ -304,12 +304,22 @@ async function run() {
 
         const postRes = await fetch(APPS_SCRIPT_URL_SCORES, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            redirect: 'follow',
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
             body: JSON.stringify(payload)
         });
 
-        const postResult = await postRes.json();
-        console.log("Google Sheets Response:", postResult);
+        const rawText = await postRes.text();
+        
+        try {
+            const postResult = JSON.parse(rawText);
+            console.log("Google Sheets Response:", postResult);
+        } catch (e) {
+            console.error("\nCRITICAL ERROR: Google Apps Script returned HTML instead of JSON.");
+            console.error("This usually means the Web App crashed, or permissions are set incorrectly.");
+            console.error("Raw Google Response snippet:\n", rawText.substring(0, 500));
+            throw new Error("Invalid response from Google Apps Script");
+        }
 
     } catch (err) {
         console.error("CRITICAL SCRIPT ERROR:", err);
