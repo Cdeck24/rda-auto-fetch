@@ -30,7 +30,7 @@ function getTargetDate() {
     return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
-// Bulletproof Date Matcher
+// Bulletproof Date Matcher (Handles "7/28" vs "7/28/2026")
 const isSameDate = (csvDate, todayStr) => {
     if (!csvDate) return false;
     const cleanDate = String(csvDate).trim();
@@ -152,6 +152,8 @@ async function run() {
         const uidIdx = pHeaders.findIndex(h => h.includes('user id') || h.includes('userid'));
         const teamIdx = pHeaders.findIndex(h => h === 'team');
         const playIdx = pHeaders.findIndex(h => h.includes('playing'));
+        
+        // --- DATE SPECIFIC LINEUP FIX ---
         const specificDateIdx = pHeaders.findIndex(h => h === targetDate.toLowerCase());
 
         const sportIdIndices = {};
@@ -166,6 +168,7 @@ async function run() {
         playersCsv.slice(1).forEach(row => {
             const team = row[teamIdx]?.trim();
             
+            // --- DATE SPECIFIC LINEUP FIX ---
             let isPlaying = true;
             if (specificDateIdx > -1 && row[specificDateIdx] !== undefined && row[specificDateIdx].trim() !== '') {
                 const val = row[specificDateIdx].trim().toLowerCase();
@@ -200,7 +203,7 @@ async function run() {
 
         console.log(`Queued ${fetchQueue.length} specific draft API requests...`);
 
-        // 3. Fetch Stats Sequentially
+        // 3. Fetch Stats Sequentially (Safe Node.js pacing)
         for (let i = 0; i < fetchQueue.length; i++) {
             const req = fetchQueue[i];
             const pData = allPlayerData[req.userId];
@@ -278,7 +281,7 @@ async function run() {
                 teamGroups[e.player.team].push(e);
             });
 
-            // 1. Same-team duplicates
+            // 1. Same-team duplicates (void specific sport for lower score)
             Object.values(teamGroups).forEach(teamEntries => {
                 if (teamEntries.length > 1) {
                     teamEntries.sort((a, b) => b.score - a.score);
@@ -349,7 +352,7 @@ async function run() {
         console.log("Sending queue payload to Google Sheets...");
         
         const payload = {
-            action: 'queue_games',
+            action: 'log_games',
             date: targetDate,
             season: SEASON,
             isPlayoff: isPlayoff,
@@ -360,7 +363,7 @@ async function run() {
         const postRes = await fetch(APPS_SCRIPT_URL_SCORES, {
             method: 'POST',
             redirect: 'follow',
-            headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+            headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // SAFE HEADERS ONLY
             body: JSON.stringify(payload)
         });
 
@@ -371,6 +374,7 @@ async function run() {
         console.log(rawResponse.substring(0, 1500)); 
         console.log("========================================================\n");
 
+        // Now attempt to parse it safely
         const postResult = JSON.parse(rawResponse);
         console.log("Google Sheets Response:", postResult);
 
