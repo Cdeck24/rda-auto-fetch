@@ -168,7 +168,7 @@ async function run() {
         playersCsv.slice(1).forEach(row => {
             const team = row[teamIdx]?.trim();
             
-            // --- DATE SPECIFIC LINEUP FIX ---
+            // --- DETERMINE PLAYING STATUS FOR BENCH STATS ---
             let isPlaying = true;
             if (specificDateIdx > -1 && row[specificDateIdx] !== undefined && row[specificDateIdx].trim() !== '') {
                 const val = row[specificDateIdx].trim().toLowerCase();
@@ -178,13 +178,15 @@ async function run() {
                 isPlaying = val === 'yes' || val === 'true' || val === '1';
             }
             
-            if (team && activeTeamsLower.has(team.toLowerCase()) && isPlaying) {
+            // WE NOW FETCH EVERYONE (STARTERS AND BENCH)
+            if (team && activeTeamsLower.has(team.toLowerCase())) {
                 const userId = row[uidIdx]?.trim();
                 const username = row[uIdx]?.trim();
                 if (!userId) return;
 
                 if (!allPlayerData[userId]) {
-                    allPlayerData[userId] = { userId, username, team, scoresBySport: {}, lineupsBySport: {} };
+                    // Tag them as playing or benched internally so we can process them correctly later
+                    allPlayerData[userId] = { userId, username, team, isPlaying, scoresBySport: {}, lineupsBySport: {} };
                 }
 
                 // Look for Draft IDs for this player and queue them up
@@ -256,6 +258,9 @@ async function run() {
         const hashes = new Map();
 
         Object.values(allPlayerData).forEach(p => {
+            // BENCH PLAYERS CANNOT TRIGGER DUPLICATE VIOLATIONS FOR STARTERS
+            if (!p.isPlaying) return;
+
             for (const s in p.lineupsBySport) {
                 const l = p.lineupsBySport[s];
                 if (!Array.isArray(l) || !l.length) continue;
@@ -320,7 +325,12 @@ async function run() {
                 const score = player.scoresBySport[sport];
                 if (typeof score === 'number') {
                     playerStatsToLog.push({
-                        username: player.username, userId: player.userId, team: player.team, score, sport
+                        username: player.username, 
+                        userId: player.userId, 
+                        team: player.team, 
+                        score: score, 
+                        sport: sport, 
+                        isBench: !player.isPlaying // PASSING BENCH STATUS TO SPREADSHEET
                     });
                 }
             }
@@ -337,8 +347,9 @@ async function run() {
             [...p1, ...p2].forEach(p => Object.keys(p.scoresBySport).forEach(s => allSports.add(s)));
 
             [...allSports].forEach(sport => {
-                const s1 = p1.reduce((sum, p) => sum + (typeof p.scoresBySport[sport] === 'number' ? p.scoresBySport[sport] : 0), 0);
-                const s2 = p2.reduce((sum, p) => sum + (typeof p.scoresBySport[sport] === 'number' ? p.scoresBySport[sport] : 0), 0);
+                // EXTREMELY CRITICAL: ONLY ADD UP STARTERS FOR THE TEAM SCORE
+                const s1 = p1.filter(p => p.isPlaying).reduce((sum, p) => sum + (typeof p.scoresBySport[sport] === 'number' ? p.scoresBySport[sport] : 0), 0);
+                const s2 = p2.filter(p => p.isPlaying).reduce((sum, p) => sum + (typeof p.scoresBySport[sport] === 'number' ? p.scoresBySport[sport] : 0), 0);
                 if (s1 > s2) t1SeriesWins++;
                 else if (s2 > s1) t2SeriesWins++;
                 t1Score += s1; t2Score += s2;
@@ -374,7 +385,6 @@ async function run() {
         console.log(rawResponse.substring(0, 1500)); 
         console.log("========================================================\n");
 
-        // Now attempt to parse it safely
         const postResult = JSON.parse(rawResponse);
         console.log("Google Sheets Response:", postResult);
 
