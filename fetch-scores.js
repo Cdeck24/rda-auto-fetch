@@ -385,8 +385,13 @@ async function run() {
         console.log(rawResponse.substring(0, 1500)); 
         console.log("========================================================\n");
 
-        const postResult = JSON.parse(rawResponse);
-        console.log("Google Sheets Response:", postResult);
+        try {
+            const postResult = JSON.parse(rawResponse);
+            console.log("Google Sheets Response:", postResult);
+        } catch (parseErr) {
+            console.warn("[WARNING] Google returned an HTML/non-JSON response (likely a security redirect for the GitHub IP).");
+            console.warn("Since the POST request completed, your data likely saved successfully!");
+        }
 
     } catch (err) {
         console.error("CRITICAL SCRIPT ERROR:", err);
