@@ -254,7 +254,7 @@ async function run() {
 
         // 4. Duplicate Logic
         console.log("Applying duplicate rules...");
-        const draftUserIds = new Set(['jvbb41pv', 'kvMbxE63', 'R37kAWO3', 'gv8D5Q0v', 'xnrGDpRJ', 'gv8dYyPv', 'lnEw4avw', 'WJqLyqAn']);
+        const draftUserIds = new Set(['jvbb41pv', 'kvMbxE63', 'gv8D5Q0v', 'xnrGDpRJ', 'gv8dYyPv', 'lnEw4avw', 'WJqLyqAn']);
         const hashes = new Map();
 
         Object.values(allPlayerData).forEach(p => {
