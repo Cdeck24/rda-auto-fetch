@@ -102,6 +102,19 @@ async function run() {
     console.log(`Starting automated fetch for date: ${targetDate}`);
 
     try {
+        const checkRes = await fetch(`${APPS_SCRIPT_URL_SCORES}?action=check_date&date=${encodeURIComponent(targetDate)}&season=${SEASON}`);
+        if (checkRes.ok) {
+            const status = await checkRes.json();
+            if (status.alreadyLogged) {
+                console.log(`Date ${targetDate} has already been logged. Skipping execution.`);
+                return;
+            }
+        }
+    } catch (e) {
+        console.warn("Could not verify date status, proceeding with fetch...");
+    }
+
+    try {
         // 1. Fetch CSVs
         const [playersCsv, scheduleCsv] = await Promise.all([fetchCSV(CSV_PLAYERS), fetchCSV(CSV_SCHEDULE)]);
         
