@@ -208,7 +208,6 @@ async function run() {
             const isDraftAccount = draftUserIds.has(userId);
             const isTeamActive = team && activeTeamsLower.has(team.toLowerCase());
 
-            // CRITICAL FIX: Fetch active team players AND draft accounts so they can be matched
             if (isTeamActive || isDraftAccount) {
                 let isPlaying = true;
                 if (specificDateIdx > -1 && row[specificDateIdx] !== undefined && row[specificDateIdx].trim() !== '') {
@@ -270,7 +269,6 @@ async function run() {
                 const finalScore = parseFloat(String(scoreDisplay).replace(/,/g, '')) || 0;
                 pData.scoresBySport[req.sport] = finalScore;
 
-                // CRITICAL FIX: Exhaustive search for lineup array across RealApp structures
                 let extractedLineup = data.lineup || data.info?.lineup || 
                                       data.playerLineups || data.info?.playerLineups || 
                                       data.contestPlayerLineup || data.info?.contestPlayerLineup || 
@@ -303,14 +301,12 @@ async function run() {
         const hashes = new Map();
 
         Object.values(allPlayerData).forEach(p => {
-            // CRITICAL FIX: Do not skip draft accounts when compiling lineup hashes
             if (!p.isPlaying && !p.isDraftAccount) return;
 
             for (const s in p.lineupsBySport) {
                 const l = p.lineupsBySport[s];
                 if (!Array.isArray(l) || !l.length) continue;
                 
-                // CRITICAL FIX: Sort athlete names so lineup pick order does not break matching
                 const athleteNames = l.map(x => {
                     const lp = x.player || x;
                     return (lp.displayName || x.displayName || lp.name || x.name || '').trim().toLowerCase();
@@ -378,7 +374,6 @@ async function run() {
         const playerStatsToLog = [];
 
         Object.values(allPlayerData).forEach(player => {
-            // CRITICAL FIX: Do not write monitoring-only draft accounts to official league logs
             if (player.isDraftAccount && (!player.team || !activeTeamsLower.has(player.team.toLowerCase()))) {
                 return;
             }
@@ -400,10 +395,11 @@ async function run() {
 
         todayGames.forEach(game => {
             const t1 = game.team1, t2 = game.team2;
-            let t1Score = 0, t2Score = 0, t1SeriesWins = 0, t2SeriesWins = 0;
+            let t1Score = 0, t2Score = 0;
+            let team1SeriesWins = 0, team2SeriesWins = 0;
 
-            const p1 = Object.values(allPlayerData).filter(p => !p.isDraftAccount && p.team.toLowerCase() === t1.toLowerCase());
-            const p2 = Object.values(allPlayerData).filter(p => !p.isDraftAccount && p.team.toLowerCase() === t2.toLowerCase());
+            const p1 = Object.values(allPlayerData).filter(p => !p.isDraftAccount && p.team && p.team.toLowerCase() === t1.toLowerCase());
+            const p2 = Object.values(allPlayerData).filter(p => !p.isDraftAccount && p.team && p.team.toLowerCase() === t2.toLowerCase());
             
             const allSports = new Set();
             [...p1, ...p2].forEach(p => Object.keys(p.scoresBySport).forEach(s => allSports.add(s)));
@@ -412,14 +408,14 @@ async function run() {
                 const s1 = p1.filter(p => p.isPlaying).reduce((sum, p) => sum + (typeof p.scoresBySport[sport] === 'number' ? p.scoresBySport[sport] : 0), 0);
                 const s2 = p2.filter(p => p.isPlaying).reduce((sum, p) => sum + (typeof p.scoresBySport[sport] === 'number' ? p.scoresBySport[sport] : 0), 0);
                 
-                if (s1 > s2) t1SeriesWins++;
-                else if (s2 > s1) t2SeriesWins++;
+                if (s1 > s2) team1SeriesWins++;
+                else if (s2 > s1) team2SeriesWins++;
                 
                 t1Score += s1; 
                 t2Score += s2;
             });
 
-            let winner = t1SeriesWins > t2SeriesWins ? t1 : (t2SeriesWins > t1SeriesWins ? t2 : (t1Score > t2Score ? t1 : t2));
+            let winner = team1SeriesWins > team2SeriesWins ? t1 : (team2SeriesWins > team1SeriesWins ? t2 : (t1Score > t2Score ? t1 : t2));
             gamesToLog.push({ 
                 team1: t1, 
                 team2: t2, 
