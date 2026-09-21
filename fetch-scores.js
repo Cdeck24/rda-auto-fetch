@@ -13,7 +13,6 @@ const SEASON = '6';
 const CSV_PLAYERS = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vR7pZmpj4lJiBMkcjcgzJ77n2xmFIRlmuD-0Zuakz8lZekYobXkmTjfaEwhJYdNuM5F9VKlDm-FPaw8/pub?gid=0&single=true&output=csv';
 const CSV_SCHEDULE = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vS93Cbk4JUmCBgtIR1-RnSHlYY9E-dxEEWVT_Jx-T_Lm07oa6KYlnBGAqaGJin4VBpG4GmOGn8ktTPy/pub?gid=1595040071&single=true&output=csv';
 
-// Known Target Draft Accounts to Monitor for Copying
 const DUPLICATE_TARGETS = {
     'jvbb41pv': { username: 'alp', sports: ['NFL', 'CFB', 'FC'] },
     'gv8D5Q0v': { username: 'chuiso', sports: ['ALL'] },
@@ -43,9 +42,6 @@ const DUPLICATE_TARGETS = {
 
 const draftUserIds = new Set(Object.keys(DUPLICATE_TARGETS));
 
-// ==========================================================
-// UTILITIES
-// ==========================================================
 function generateRequestToken() {
     const timestampMs = Date.now();
     const hasher = new Hashids("realwebapp", 16);
@@ -121,9 +117,6 @@ async function fetchRealDraftStats(url, retries = 0) {
     return res.json();
 }
 
-// ==========================================================
-// MAIN WORKER
-// ==========================================================
 async function run() {
     const targetDate = getTargetDate();
     console.log(`Starting automated fetch for date: ${targetDate}`);
@@ -142,28 +135,41 @@ async function run() {
     }
 
     try {
-        // 1. Fetch CSVs
         const [playersCsv, scheduleCsv] = await Promise.all([fetchCSV(CSV_PLAYERS), fetchCSV(CSV_SCHEDULE)]);
         
-        const schedHeaders = scheduleCsv[0].map(h => h.toLowerCase());
+        const schedHeaders = scheduleCsv[0].map(h => h.toLowerCase().trim());
         const dIdx = schedHeaders.findIndex(h => h.includes('date'));
-        const t1Idx = schedHeaders.findIndex(h => h.includes('team1') || h.includes('team 1'));
-        const t2Idx = schedHeaders.findIndex(h => h.includes('team2') || h.includes('team 2'));
-        const typeIdx = schedHeaders.findIndex(h => h.includes('game type'));
+        const t1Idx = schedHeaders.findIndex(h => h.includes('team1') || h.includes('team 1') || h.includes('away'));
+        const t2Idx = schedHeaders.findIndex(h => h.includes('team2') || h.includes('team 2') || h.includes('home'));
 
         const todayGames = [];
         let isPlayoff = false;
         let isPreseason = false;
+        let detectedRound = '';
 
         scheduleCsv.slice(1).forEach(r => {
             if (isSameDate(r[dIdx], targetDate)) {
-                todayGames.push({ team1: r[t1Idx]?.trim(), team2: r[t2Idx]?.trim() });
-                const typeStr = typeIdx > -1 ? (r[typeIdx] || '').toLowerCase() : '';
-                
-                if (typeStr.includes('playoff')) isPlayoff = true;
-                if (typeStr.includes('preseason') || typeStr.includes('pre-season')) isPreseason = true;
+                const t1 = r[t1Idx]?.trim();
+                const t2 = r[t2Idx]?.trim();
+                if (t1 && t2 && t1 !== 'TBD' && t2 !== 'TBD') {
+                    todayGames.push({ team1: t1, team2: t2 });
+                }
+
+                // Check entire row for playoff and round tags
+                const rowStr = r.map(c => String(c || '').toLowerCase()).join(' ');
+                if (rowStr.includes('playoff') || rowStr.includes('postseason') || rowStr.includes('wild card') || rowStr.includes('conference final') || rowStr.includes('finals')) {
+                    isPlayoff = true;
+                    if (rowStr.includes('wild card')) detectedRound = 'Wild Card';
+                    else if (rowStr.includes('conference final')) detectedRound = 'Conference Finals';
+                    else if (rowStr.includes('finals')) detectedRound = 'Finals';
+                }
+                if (rowStr.includes('preseason') || rowStr.includes('pre-season')) {
+                    isPreseason = true;
+                }
             }
         });
+
+        console.log(`Date classification for ${targetDate}: Playoff = ${isPlayoff} (${detectedRound || 'N/A'}), Preseason = ${isPreseason}`);
 
         if (todayGames.length === 0) {
             console.log(`No games found for ${targetDate}. Exiting cleanly.`);
@@ -182,7 +188,6 @@ async function run() {
         });
         console.log(`Found ${todayGames.length} games. Active teams: ${Array.from(activeTeamsLower).join(', ')}`);
 
-        // 2. Parse Players & Find Sport IDs
         const pHeaders = playersCsv[0].map(h => h.toLowerCase());
         const uIdx = pHeaders.findIndex(h => h === 'username');
         const uidIdx = pHeaders.findIndex(h => h.includes('user id') || h.includes('userid'));
@@ -245,7 +250,6 @@ async function run() {
 
         console.log(`Queued ${fetchQueue.length} specific draft API requests...`);
 
-        // 3. Fetch Stats Sequentially
         for (let i = 0; i < fetchQueue.length; i++) {
             const req = fetchQueue[i];
             const pData = allPlayerData[req.userId];
@@ -296,7 +300,6 @@ async function run() {
             await sleep(350);
         }
 
-        // 4. Duplicate Detection & Voiding Logic
         console.log("Applying duplicate rules...");
         const hashes = new Map();
 
@@ -334,7 +337,6 @@ async function run() {
                 teamGroups[e.player.team].push(e);
             });
 
-            // Rule 1: Same-team duplicates (void lower score on same franchise)
             Object.values(teamGroups).forEach(teamEntries => {
                 if (teamEntries.length > 1) {
                     teamEntries.sort((a, b) => b.score - a.score);
@@ -347,7 +349,6 @@ async function run() {
                 }
             });
 
-            // Rule 2: Target Draft Account duplicates
             if (draftAccounts.length > 0) {
                 entries.forEach(e => {
                     if (!e.player.isDraftAccount) {
@@ -369,7 +370,6 @@ async function run() {
             }
         }
 
-        // 5. Prepare Payload (Filter out standalone draft accounts)
         const gamesToLog = [];
         const playerStatsToLog = [];
 
@@ -387,7 +387,9 @@ async function run() {
                         team: player.team, 
                         score: score, 
                         sport: sport, 
-                        isBench: !player.isPlaying
+                        isBench: !player.isPlaying,
+                        isPlayoff: isPlayoff,
+                        type: isPlayoff ? 'Playoffs' : 'Regular'
                     });
                 }
             }
@@ -415,19 +417,21 @@ async function run() {
                 t2Score += s2;
             });
 
-            let winner = team1SeriesWins > team2SeriesWins ? t1 : (team2SeriesWins > team1SeriesWins ? t2 : (t1Score > t2Score ? t1 : t2));
+            const winner = team1SeriesWins > team2SeriesWins ? t1 : (team2SeriesWins > team1SeriesWins ? t2 : (t1Score > t2Score ? t1 : t2));
             gamesToLog.push({ 
                 team1: t1, 
                 team2: t2, 
                 team1score: parseFloat(t1Score.toFixed(2)), 
                 team2score: parseFloat(t2Score.toFixed(2)), 
-                winner, 
-                team1SeriesWins, 
-                team2SeriesWins 
+                winner: winner, 
+                team1SeriesWins: team1SeriesWins, 
+                team2SeriesWins: team2SeriesWins,
+                isPlayoff: isPlayoff,
+                type: isPlayoff ? 'Playoffs' : 'Regular',
+                round: detectedRound || (isPlayoff ? 'Playoffs' : 'Regular')
             });
         });
 
-        // 6. Send to Google Sheets Queue
         console.log("Sending queue payload to Google Sheets...");
         
         const payload = {
@@ -435,6 +439,7 @@ async function run() {
             date: targetDate,
             season: SEASON,
             isPlayoff: isPlayoff,
+            round: detectedRound,
             games: gamesToLog,
             playerStats: playerStatsToLog
         };
@@ -457,8 +462,7 @@ async function run() {
             const postResult = JSON.parse(rawResponse);
             console.log("Google Sheets Response:", postResult);
         } catch (parseErr) {
-            console.warn("[WARNING] Google returned an HTML/non-JSON response (likely a security redirect for the GitHub IP).");
-            console.warn("Since the POST request completed, your data likely saved successfully!");
+            console.warn("[WARNING] Google returned an HTML/non-JSON response.");
         }
 
     } catch (err) {
