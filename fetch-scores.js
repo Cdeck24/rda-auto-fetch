@@ -155,7 +155,6 @@ async function run() {
                     todayGames.push({ team1: t1, team2: t2 });
                 }
 
-                // Check entire row for playoff and round tags
                 const rowStr = r.map(c => String(c || '').toLowerCase()).join(' ');
                 if (rowStr.includes('playoff') || rowStr.includes('postseason') || rowStr.includes('wild card') || rowStr.includes('conference final') || rowStr.includes('finals')) {
                     isPlayoff = true;
@@ -300,6 +299,7 @@ async function run() {
             await sleep(350);
         }
 
+        // 4. Duplicate Detection & Voiding Logic
         console.log("Applying duplicate rules...");
         const hashes = new Map();
 
@@ -310,15 +310,16 @@ async function run() {
                 const l = p.lineupsBySport[s];
                 if (!Array.isArray(l) || !l.length) continue;
                 
+                // Do NOT sort: Order matters. Lineups only match if players are in the exact same positions
                 const athleteNames = l.map(x => {
                     const lp = x.player || x;
                     return (lp.displayName || x.displayName || lp.name || x.name || '').trim().toLowerCase();
-                }).filter(Boolean).sort();
+                }).filter(Boolean);
 
                 if (!athleteNames.length) continue;
 
                 const sportUpper = s.toUpperCase();
-                const h = `${sportUpper}:${athleteNames.join(',')}`;
+                const h = `${sportUpper}:${athleteNames.join('->')}`;
                 
                 if (!hashes.has(h)) hashes.set(h, []);
                 hashes.get(h).push({ player: p, sport: sportUpper, score: p.scoresBySport[s] || 0 });
@@ -370,6 +371,7 @@ async function run() {
             }
         }
 
+        // 5. Prepare Payload
         const gamesToLog = [];
         const playerStatsToLog = [];
 
@@ -432,6 +434,7 @@ async function run() {
             });
         });
 
+        // 6. Send to Google Sheets Queue
         console.log("Sending queue payload to Google Sheets...");
         
         const payload = {
