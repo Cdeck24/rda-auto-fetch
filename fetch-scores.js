@@ -40,6 +40,7 @@ const DUPLICATE_TARGETS = {
     'Gv1YrA6v': { username: 'greektime', sports: ['ALL'] }
 };
 
+const KNOWN_SPORTS = new Set(['MLB', 'NBA', 'NFL', 'CFB', 'CBB', 'NHL', 'FC', 'SOCCER', 'WNBA', 'GOLF']);
 const draftUserIds = new Set(Object.keys(DUPLICATE_TARGETS));
 
 function generateRequestToken() {
@@ -143,6 +144,7 @@ async function run() {
         const t2Idx = schedHeaders.findIndex(h => h.includes('team2') || h.includes('team 2') || h.includes('home'));
 
         const todayGames = [];
+        const daySports = new Set();
         let isPlayoff = false;
         let isPreseason = false;
         let detectedRound = '';
@@ -151,8 +153,27 @@ async function run() {
             if (isSameDate(r[dIdx], targetDate)) {
                 const t1 = r[t1Idx]?.trim();
                 const t2 = r[t2Idx]?.trim();
+                
+                // Extract only sports explicitly scheduled on this row
+                const rowSports = new Set();
+                r.forEach(cell => {
+                    if (!cell) return;
+                    String(cell).split(/[,/]/).forEach(item => {
+                        const clean = item.trim().toUpperCase();
+                        if (KNOWN_SPORTS.has(clean)) {
+                            const norm = clean === 'SOCCER' ? 'FC' : clean;
+                            rowSports.add(norm);
+                            daySports.add(norm);
+                        }
+                    });
+                });
+
                 if (t1 && t2 && t1 !== 'TBD' && t2 !== 'TBD') {
-                    todayGames.push({ team1: t1, team2: t2 });
+                    todayGames.push({ 
+                        team1: t1, 
+                        team2: t2,
+                        scheduledSports: Array.from(rowSports)
+                    });
                 }
 
                 const rowStr = r.map(c => String(c || '').toLowerCase()).join(' ');
@@ -169,6 +190,7 @@ async function run() {
         });
 
         console.log(`Date classification for ${targetDate}: Playoff = ${isPlayoff} (${detectedRound || 'N/A'}), Preseason = ${isPreseason}`);
+        console.log(`Scheduled sports for ${targetDate}: ${Array.from(daySports).join(', ') || 'ALL/UNSPECIFIED'}`);
 
         if (todayGames.length === 0) {
             console.log(`No games found for ${targetDate}. Exiting cleanly.`);
@@ -187,7 +209,7 @@ async function run() {
         });
         console.log(`Found ${todayGames.length} games. Active teams: ${Array.from(activeTeamsLower).join(', ')}`);
 
-        const pHeaders = playersCsv[0].map(h => h.toLowerCase());
+        const pHeaders = playersCsv[0].map(h => h.toLowerCase().trim());
         const uIdx = pHeaders.findIndex(h => h === 'username');
         const uidIdx = pHeaders.findIndex(h => h.includes('user id') || h.includes('userid'));
         const teamIdx = pHeaders.findIndex(h => h === 'team');
@@ -197,7 +219,10 @@ async function run() {
         const sportIdIndices = {};
         pHeaders.forEach((h, i) => {
             const m = h.match(/^([a-z]+) id$/);
-            if (m && h !== 'user id' && h !== 'draft id') sportIdIndices[m[1].toUpperCase()] = i;
+            if (m && h !== 'user id' && h !== 'draft id') {
+                const sportCode = m[1].toUpperCase() === 'SOCCER' ? 'FC' : m[1].toUpperCase();
+                sportIdIndices[sportCode] = i;
+            }
         });
 
         const allPlayerData = {};
@@ -235,6 +260,11 @@ async function run() {
                 }
 
                 for (const sport in sportIdIndices) {
+                    // Only queue sports scheduled for today if schedule sports were parsed
+                    if (daySports.size > 0 && !daySports.has(sport)) {
+                        continue;
+                    }
+
                     const draftId = row[sportIdIndices[sport]]?.trim();
                     if (draftId) {
                         fetchQueue.push({
@@ -310,7 +340,7 @@ async function run() {
                 const l = p.lineupsBySport[s];
                 if (!Array.isArray(l) || !l.length) continue;
                 
-                // Do NOT sort: Order matters. Lineups only match if players are in the exact same positions
+                // Strict pick order: No .sort()
                 const athleteNames = l.map(x => {
                     const lp = x.player || x;
                     return (lp.displayName || x.displayName || lp.name || x.name || '').trim().toLowerCase();
@@ -338,6 +368,7 @@ async function run() {
                 teamGroups[e.player.team].push(e);
             });
 
+            // Rule 1: Same team duplicate (void lower score on same franchise)
             Object.values(teamGroups).forEach(teamEntries => {
                 if (teamEntries.length > 1) {
                     teamEntries.sort((a, b) => b.score - a.score);
@@ -350,6 +381,7 @@ async function run() {
                 }
             });
 
+            // Rule 2: Monitored target account copy
             if (draftAccounts.length > 0) {
                 entries.forEach(e => {
                     if (!e.player.isDraftAccount) {
@@ -381,6 +413,13 @@ async function run() {
             }
 
             for (const sport in player.scoresBySport) {
+                const normSport = sport.toUpperCase() === 'SOCCER' ? 'FC' : sport.toUpperCase();
+                
+                // Never write unscheduled sports to the database
+                if (daySports.size > 0 && !daySports.has(normSport)) {
+                    continue;
+                }
+
                 const score = player.scoresBySport[sport];
                 if (typeof score === 'number') {
                     playerStatsToLog.push({
@@ -388,7 +427,7 @@ async function run() {
                         userId: player.userId, 
                         team: player.team, 
                         score: score, 
-                        sport: sport, 
+                        sport: normSport, 
                         isBench: !player.isPlaying,
                         isPlayoff: isPlayoff,
                         type: isPlayoff ? 'Playoffs' : 'Regular'
@@ -405,12 +444,25 @@ async function run() {
             const p1 = Object.values(allPlayerData).filter(p => !p.isDraftAccount && p.team && p.team.toLowerCase() === t1.toLowerCase());
             const p2 = Object.values(allPlayerData).filter(p => !p.isDraftAccount && p.team && p.team.toLowerCase() === t2.toLowerCase());
             
-            const allSports = new Set();
-            [...p1, ...p2].forEach(p => Object.keys(p.scoresBySport).forEach(s => allSports.add(s)));
+            // Only evaluate sports scheduled for this matchup
+            const sportsToEvaluate = (game.scheduledSports && game.scheduledSports.length > 0)
+                ? game.scheduledSports
+                : (daySports.size > 0 
+                    ? Array.from(daySports) 
+                    : Array.from(new Set([...p1, ...p2].flatMap(p => Object.keys(p.scoresBySport)))));
 
-            [...allSports].forEach(sport => {
-                const s1 = p1.filter(p => p.isPlaying).reduce((sum, p) => sum + (typeof p.scoresBySport[sport] === 'number' ? p.scoresBySport[sport] : 0), 0);
-                const s2 = p2.filter(p => p.isPlaying).reduce((sum, p) => sum + (typeof p.scoresBySport[sport] === 'number' ? p.scoresBySport[sport] : 0), 0);
+            sportsToEvaluate.forEach(sport => {
+                const normSport = sport.toUpperCase() === 'SOCCER' ? 'FC' : sport.toUpperCase();
+
+                const s1 = p1.filter(p => p.isPlaying).reduce((sum, p) => {
+                    const sc = p.scoresBySport[normSport] ?? p.scoresBySport[sport];
+                    return sum + (typeof sc === 'number' ? sc : 0);
+                }, 0);
+
+                const s2 = p2.filter(p => p.isPlaying).reduce((sum, p) => {
+                    const sc = p.scoresBySport[normSport] ?? p.scoresBySport[sport];
+                    return sum + (typeof sc === 'number' ? sc : 0);
+                }, 0);
                 
                 if (s1 > s2) team1SeriesWins++;
                 else if (s2 > s1) team2SeriesWins++;
