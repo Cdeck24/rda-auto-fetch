@@ -154,7 +154,6 @@ async function run() {
                 const t1 = r[t1Idx]?.trim();
                 const t2 = r[t2Idx]?.trim();
                 
-                // Extract only sports explicitly scheduled on this row
                 const rowSports = new Set();
                 r.forEach(cell => {
                     if (!cell) return;
@@ -234,10 +233,11 @@ async function run() {
             const username = row[uIdx]?.trim();
             if (!userId) return;
 
-            const isDraftAccount = draftUserIds.has(userId);
             const isTeamActive = team && activeTeamsLower.has(team.toLowerCase());
+            const isTargetAccount = draftUserIds.has(userId);
 
-            if (isTeamActive || isDraftAccount) {
+            // Fetch players on active teams AND target monitoring accounts
+            if (isTeamActive || isTargetAccount) {
                 let isPlaying = true;
                 if (specificDateIdx > -1 && row[specificDateIdx] !== undefined && row[specificDateIdx].trim() !== '') {
                     const val = row[specificDateIdx].trim().toLowerCase();
@@ -253,14 +253,15 @@ async function run() {
                         username, 
                         team: team || 'DRAFT', 
                         isPlaying, 
-                        isDraftAccount,
+                        // isExternalDraft: TRUE ONLY if this account does not play on an active league franchise
+                        isExternalDraft: isTargetAccount && !isTeamActive,
+                        isTargetAccount: isTargetAccount,
                         scoresBySport: {}, 
                         lineupsBySport: {} 
                     };
                 }
 
                 for (const sport in sportIdIndices) {
-                    // Only queue sports scheduled for today if schedule sports were parsed
                     if (daySports.size > 0 && !daySports.has(sport)) {
                         continue;
                     }
@@ -334,13 +335,12 @@ async function run() {
         const hashes = new Map();
 
         Object.values(allPlayerData).forEach(p => {
-            if (!p.isPlaying && !p.isDraftAccount) return;
+            if (!p.isPlaying && !p.isExternalDraft) return;
 
             for (const s in p.lineupsBySport) {
                 const l = p.lineupsBySport[s];
                 if (!Array.isArray(l) || !l.length) continue;
                 
-                // Strict pick order: No .sort()
                 const athleteNames = l.map(x => {
                     const lp = x.player || x;
                     return (lp.displayName || x.displayName || lp.name || x.name || '').trim().toLowerCase();
@@ -360,10 +360,10 @@ async function run() {
             if (entries.length <= 1) continue;
 
             const currentSport = hashKey.split(':')[0];
-            const draftAccounts = entries.filter(e => e.player.isDraftAccount);
+            const externalDraftAccounts = entries.filter(e => e.player.isExternalDraft);
             const teamGroups = {};
 
-            entries.filter(e => !e.player.isDraftAccount).forEach(e => {
+            entries.filter(e => !e.player.isExternalDraft).forEach(e => {
                 if (!teamGroups[e.player.team]) teamGroups[e.player.team] = [];
                 teamGroups[e.player.team].push(e);
             });
@@ -381,12 +381,12 @@ async function run() {
                 }
             });
 
-            // Rule 2: Monitored target account copy
-            if (draftAccounts.length > 0) {
+            // Rule 2: Monitored target account copy (void league player matching external account)
+            if (externalDraftAccounts.length > 0) {
                 entries.forEach(e => {
-                    if (!e.player.isDraftAccount) {
+                    if (!e.player.isExternalDraft) {
                         let shouldVoid = false;
-                        draftAccounts.forEach(da => {
+                        externalDraftAccounts.forEach(da => {
                             const targetCfg = DUPLICATE_TARGETS[da.player.userId];
                             const allowedSports = targetCfg ? targetCfg.sports : ['ALL'];
                             if (allowedSports.includes('ALL') || allowedSports.includes(currentSport)) {
@@ -396,7 +396,7 @@ async function run() {
 
                         if (shouldVoid && e.player.scoresBySport[currentSport] > 0) {
                             e.player.scoresBySport[currentSport] = 0;
-                            console.log(`[VOIDED] ${e.player.username} (${currentSport}) -> 0.00 pts (Matched Target Draft Account: ${draftAccounts.map(d => d.player.username).join(', ')})`);
+                            console.log(`[VOIDED] ${e.player.username} (${currentSport}) -> 0.00 pts (Matched Target Draft Account: ${externalDraftAccounts.map(d => d.player.username).join(', ')})`);
                         }
                     }
                 });
@@ -408,14 +408,13 @@ async function run() {
         const playerStatsToLog = [];
 
         Object.values(allPlayerData).forEach(player => {
-            if (player.isDraftAccount && (!player.team || !activeTeamsLower.has(player.team.toLowerCase()))) {
+            // Never write external non-league monitoring accounts to official stats
+            if (player.isExternalDraft) {
                 return;
             }
 
             for (const sport in player.scoresBySport) {
                 const normSport = sport.toUpperCase() === 'SOCCER' ? 'FC' : sport.toUpperCase();
-                
-                // Never write unscheduled sports to the database
                 if (daySports.size > 0 && !daySports.has(normSport)) {
                     continue;
                 }
@@ -441,10 +440,10 @@ async function run() {
             let t1Score = 0, t2Score = 0;
             let team1SeriesWins = 0, team2SeriesWins = 0;
 
-            const p1 = Object.values(allPlayerData).filter(p => !p.isDraftAccount && p.team && p.team.toLowerCase() === t1.toLowerCase());
-            const p2 = Object.values(allPlayerData).filter(p => !p.isDraftAccount && p.team && p.team.toLowerCase() === t2.toLowerCase());
+            // Include ALL rostered league players on team1 and team2
+            const p1 = Object.values(allPlayerData).filter(p => !p.isExternalDraft && p.team && p.team.toLowerCase() === t1.toLowerCase());
+            const p2 = Object.values(allPlayerData).filter(p => !p.isExternalDraft && p.team && p.team.toLowerCase() === t2.toLowerCase());
             
-            // Only evaluate sports scheduled for this matchup
             const sportsToEvaluate = (game.scheduledSports && game.scheduledSports.length > 0)
                 ? game.scheduledSports
                 : (daySports.size > 0 
@@ -471,7 +470,9 @@ async function run() {
                 t2Score += s2;
             });
 
+            // Series wins take precedence; tie-breaker resolved via total points
             const winner = team1SeriesWins > team2SeriesWins ? t1 : (team2SeriesWins > team1SeriesWins ? t2 : (t1Score > t2Score ? t1 : t2));
+
             gamesToLog.push({ 
                 team1: t1, 
                 team2: t2, 
