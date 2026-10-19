@@ -8,10 +8,10 @@ const APPS_SCRIPT_URL_SCORES = 'https://script.google.com/macros/s/AKfycbyY4rz_4
 
 const REAL_AUTH_TOKEN = 'xnr5VpW3!ApZk8L2E!4fe6e26f-949f-4936-ae3e-16384878932f';
 const REAL_VERSION = '27';
-const SEASON = '6';
+const SEASON = '7';
 
 const CSV_PLAYERS = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vR7pZmpj4lJiBMkcjcgzJ77n2xmFIRlmuD-0Zuakz8lZekYobXkmTjfaEwhJYdNuM5F9VKlDm-FPaw8/pub?gid=0&single=true&output=csv';
-const CSV_SCHEDULE = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vS93Cbk4JUmCBgtIR1-RnSHlYY9E-dxEEWVT_Jx-T_Lm07oa6KYlnBGAqaGJin4VBpG4GmOGn8ktTPy/pub?gid=1595040071&single=true&output=csv';
+const CSV_SCHEDULE = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vS93Cbk4JUmCBgtIR1-RnSHlYY9E-dxEEWVT_Jx-T_Lm07oa6KYlnBGAqaGJin4VBpG4GmOGn8ktTPy/pub?gid=2117362389&single=true&output=csv';
 
 const DUPLICATE_TARGETS = {
     'jvbb41pv': { username: 'alp', sports: ['NFL', 'CFB', 'FC'] },
@@ -154,6 +154,7 @@ async function run() {
                 const t1 = r[t1Idx]?.trim();
                 const t2 = r[t2Idx]?.trim();
                 
+                // Extract only sports explicitly scheduled on this row
                 const rowSports = new Set();
                 r.forEach(cell => {
                     if (!cell) return;
@@ -176,11 +177,12 @@ async function run() {
                 }
 
                 const rowStr = r.map(c => String(c || '').toLowerCase()).join(' ');
-                if (rowStr.includes('playoff') || rowStr.includes('postseason') || rowStr.includes('wild card') || rowStr.includes('conference final') || rowStr.includes('finals')) {
+                if (rowStr.includes('playoff') || rowStr.includes('postseason') || rowStr.includes('wild card') || rowStr.includes('semi') || rowStr.includes('conference final') || rowStr.includes('finals')) {
                     isPlayoff = true;
                     if (rowStr.includes('wild card')) detectedRound = 'Wild Card';
-                    else if (rowStr.includes('conference final')) detectedRound = 'Conference Finals';
-                    else if (rowStr.includes('finals')) detectedRound = 'Finals';
+                    else if (rowStr.includes('semi')) detectedRound = 'Semi-Finals';
+                    else if (rowStr.includes('conference final') || rowStr.includes('conf finals')) detectedRound = 'Conference Finals';
+                    else if (rowStr.includes('finals') || rowStr.includes('championship')) detectedRound = 'Finals';
                 }
                 if (rowStr.includes('preseason') || rowStr.includes('pre-season')) {
                     isPreseason = true;
@@ -341,6 +343,7 @@ async function run() {
                 const l = p.lineupsBySport[s];
                 if (!Array.isArray(l) || !l.length) continue;
                 
+                // Strict pick order: No .sort()
                 const athleteNames = l.map(x => {
                     const lp = x.player || x;
                     return (lp.displayName || x.displayName || lp.name || x.name || '').trim().toLowerCase();
